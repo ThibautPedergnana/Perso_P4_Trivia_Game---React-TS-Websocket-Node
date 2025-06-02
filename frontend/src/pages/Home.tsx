@@ -47,7 +47,8 @@ export default function Home() {
           setRoomJoinError("Erreur lors de la création de la room.");
           setLoading(false);
         } else {
-          navigate(`/room/${roomId}`);
+          navigate(`/lobby/${roomId}`);
+
           setLoading(false);
         }
       }
@@ -76,7 +77,7 @@ export default function Home() {
       },
       (response: { success: boolean; message?: string }) => {
         if (response.success) {
-          navigate(`/room/${data.roomId}`);
+          navigate(`/lobby/${data.roomId}`);
         } else {
           setRoomJoinError(response.message || "Cette room n'existe pas.");
         }

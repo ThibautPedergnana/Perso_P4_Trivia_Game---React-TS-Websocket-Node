@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import socket from "../socket";
-import { getOrCreatePlayerId } from "../utils/playerId"; // Assure-toi que cette fonction est bien définie
+import { getOrCreatePlayerId } from "../utils/playerId";
+import SettingsButton from "../components/SettingsButton";
+import SettingsModal from "../components/SettingsModal";
+import PlayerList from "../components/PlayerList";
 
 interface Player {
   id: string;
@@ -11,21 +14,24 @@ interface Player {
 }
 
 export default function Room() {
-  const { roomId } = useParams<{ roomId: string }>();
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [questionDuration, setQuestionDuration] = useState(45);
+  const [timeLeft, setTimeLeft] = useState(questionDuration);
   const [answer, setAnswer] = useState<string>("");
-  const [players, setPlayers] = useState<Player[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const totalQuestions = 10;
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  const playerId = getOrCreatePlayerId(); // Récupérer l'ID du joueur
+  const { roomId } = useParams<{ roomId: string }>();
+  const [players, setPlayers] = useState<Player[]>([]);
 
-  // Premier chargement + join room
+  const playerId = getOrCreatePlayerId();
+
   useEffect(() => {
     const storedPlayerName = localStorage.getItem("playerName");
     if (!roomId || !storedPlayerName) {
-      navigate("/"); // Redirection si pas d'ID de room ou de pseudo
+      navigate("/");
       return;
     }
 
@@ -37,19 +43,33 @@ export default function Room() {
       }
     });
 
-    // Rejoindre la room
-    socket.emit("joinRoom", {
+    console.log("🔄 getPlayerList", {
+      players,
+    });
+    console.log("🔄 Tentative de joinRoom", {
       roomId,
-      playerName: storedPlayerName,
+      storedPlayerName,
       playerId,
     });
+
+    // Rejoindre la room
+    socket.emit(
+      "joinRoom",
+      {
+        roomId,
+        playerName: storedPlayerName,
+        playerId,
+      },
+      (response: { success: boolean }) => {
+        console.log("Réponse du serveur joinRoom :", response);
+      }
+    );
 
     return () => {
       socket.off("getPlayerList");
     };
   }, [roomId, navigate, playerId]);
 
-  // Listener pour les mises à jour en temps réel de la liste des joueurs
   useEffect(() => {
     socket.on("playerList", (players: Player[]) => {
       setPlayers(players);
@@ -66,18 +86,35 @@ export default function Room() {
   };
 
   const handleSubmitAnswer = () => {
-    // Envoi de la réponse lorsque le joueur soumet
     socket.emit("submitAnswer", { roomId, playerId, answer });
-    setAnswer(""); // Réinitialisation de la réponse
+    setAnswer("");
 
-    // Passage à la question suivante
     if (currentQuestionIndex < totalQuestions - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1);
     } else {
-      // Logique pour la fin du jeu si toutes les questions ont été répondues
       console.log("Fin du jeu!");
     }
   };
+
+  useEffect(() => {
+    setTimeLeft(questionDuration); // remet le timer à la durée configurée
+
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          handleSubmitAnswer(); // soumet automatiquement quand timer = 0
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [currentQuestionIndex, questionDuration]);
+
+  const currentPlayer = players.find((p) => p.id === playerId);
+  const isAdmin = currentPlayer?.isAdmin;
 
   if (loading) {
     return (
@@ -89,36 +126,30 @@ export default function Room() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white flex relative">
-      <div className="w-64 bg-gray-800 p-4 shadow-xl rounded-r-2xl">
-        <h2 className="text-lg font-semibold mb-4 text-center">Joueurs</h2>
-        <ul className="space-y-2">
-          {players.map((player) => (
-            <li
-              key={player.id}
-              className="flex items-center justify-between bg-gray-700 px-3 py-2 rounded text-sm"
-            >
-              <span>
-                {player.name}
-                {player.isAdmin && (
-                  <span className="text-yellow-400 ml-2" title="Admin">
-                    ★
-                  </span>
-                )}
-                {player.id === playerId && (
-                  <span className="text-gray-400 text-xs ml-1">(toi)</span>
-                )}
-              </span>
-              <span className="text-gray-400">{player.score} pts</span>
-            </li>
-          ))}
-        </ul>
+      {/* Liste des joueurs avec PlayerList */}
+      <div className="absolute left-4 top-4">
+        <PlayerList players={players} showReadyStatus={false} />
       </div>
 
+      {/* Bouton settings s'il est admin */}
+      {isAdmin && (
+        <div className="absolute top-4 left-72 z-10">
+          <SettingsButton onClick={() => setIsSettingsOpen(true)} />
+        </div>
+      )}
+
+      {/* Zone centrale */}
       <div className="flex-1 flex flex-col items-center justify-center p-8">
         <div className="bg-gray-800 p-6 rounded-2xl shadow-xl w-full max-w-2xl text-center">
-          <h1 className="text-xl font-bold mb-4">
-            Question : Quelle est la capitale de la France ?
-          </h1>
+          <div className="flex justify-between items-center mb-4">
+            <h1 className="text-xl font-bold">
+              Question : Quelle est la capitale de la France ?
+            </h1>
+            <span className="text-lg font-mono bg-black bg-opacity-30 px-3 py-1 rounded">
+              ⏱ {timeLeft}s
+            </span>
+          </div>
+
           <p className="text-sm text-gray-400 mb-2">
             Question {currentQuestionIndex + 1}/{totalQuestions}
           </p>
@@ -139,6 +170,25 @@ export default function Room() {
           </button>
         </div>
       </div>
+
+      {/* Modal de paramètres */}
+      {isSettingsOpen && (
+        <SettingsModal
+          questionDuration={questionDuration}
+          setQuestionDuration={(newDuration) => {
+            setQuestionDuration(newDuration);
+            setTimeLeft(newDuration); // réinitialise le timer
+          }}
+          onClose={() => setIsSettingsOpen(false)}
+          onSave={() => {
+            socket.emit("updateRoomSettings", {
+              roomId,
+              questionDuration,
+            });
+            setIsSettingsOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
